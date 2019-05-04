@@ -1,0 +1,135 @@
+---
+title: "Practical Machine Learning Course Project"
+author: "Juan Manuel Tonello"
+date: "4 de mayo de 2019"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(caret)
+library(randomForest)
+```
+
+## Abstract
+We applied machine learning techniques to identify different ways of performing barbell lifts.  The training data provided more than 19000 annotated observations containing 160 variables from 6 different subjects. The selected model was a random forest with 10-fold cross validation. We got a overall accuracy greater than 99% meassured on validation set.
+
+## Background
+Using devices such as Jawbone Up, Nike FuelBand, and Fitbit it is now possible to collect a large amount of data about personal activity relatively inexpensively. These type of devices are part of the quantified self movement - a group of enthusiasts who take measurements about themselves regularly to improve their health, to find patterns in their behavior, or because they are tech geeks. One thing that people regularly do is quantify how much of a particular activity they do, but they rarely quantify how well they do it. In this project, our goal will be to use data from accelerometers on the belt, forearm, arm, and dumbell of 6 participants. They were asked to perform barbell lifts correctly and incorrectly in 5 different ways. More information is available from the website here: http://web.archive.org/web/20161224072740/http:/groupware.les.inf.puc-rio.br/har (see the section on the Weight Lifting Exercise Dataset).
+
+## Exploratory analysis, preprocessing and cleaning
+```{r load}
+# Load data
+allData <- read.table("./pml-training.csv", sep = ",", header = TRUE)
+dim(allData)
+
+#head(allData)
+#str(allData)
+#summary(allData)
+```
+The original dataset consists of 19622 observations of 160 variables.  An initial exploratory analysis showed that many variables contain mostly NAs and some observations contain DIV/0 errors.
+
+### Variable "new window"
+The observations with DIV/0 errors are coincident with variable "new window" = yes.  From the website sourcing the data we know they used a sliding window approach for feature extraction. We assumed that DIV/0 errors were caused by averaging data over time for windows with zero duration. So we discarded 406 observations with "new window"" = yes.
+
+```{r newwindow}
+# Ignore registers with "new window = yes"
+cleanData <- allData[allData$new_window == "no",]
+```
+
+### Variables with no information 
+```{r select, echo = FALSE}
+# Ignore variables like IDs and timestamps
+cols.dont.want.1 <- c("X", "raw_timestamp_part_1", "raw_timestamp_part_2", "cvtd_timestamp", "new_window", "num_window")
+
+# Ignore variables with no information (ej. all NA, all zero, etc.)
+cols.dont.want.2 <- c("kurtosis_roll_belt","kurtosis_picth_belt","kurtosis_yaw_belt","skewness_roll_belt","skewness_roll_belt.1","skewness_yaw_belt","max_roll_belt","max_picth_belt","max_yaw_belt","min_roll_belt","min_pitch_belt","min_yaw_belt","amplitude_roll_belt","amplitude_pitch_belt","amplitude_yaw_belt","var_total_accel_belt","avg_roll_belt","stddev_roll_belt","var_roll_belt","avg_pitch_belt","stddev_pitch_belt","var_pitch_belt","avg_yaw_belt","stddev_yaw_belt","var_yaw_belt","var_accel_arm","avg_roll_arm","stddev_roll_arm","var_roll_arm","avg_pitch_arm","stddev_pitch_arm","var_pitch_arm","avg_yaw_arm","stddev_yaw_arm","var_yaw_arm","kurtosis_roll_arm","kurtosis_picth_arm","kurtosis_yaw_arm","skewness_roll_arm","skewness_pitch_arm","skewness_yaw_arm","max_roll_arm","max_picth_arm","max_yaw_arm","min_roll_arm","min_pitch_arm","min_yaw_arm","amplitude_roll_arm","amplitude_pitch_arm","amplitude_yaw_arm","kurtosis_roll_dumbbell","kurtosis_picth_dumbbell","kurtosis_yaw_dumbbell","skewness_roll_dumbbell","skewness_pitch_dumbbell","skewness_yaw_dumbbell","max_roll_dumbbell","max_picth_dumbbell","max_yaw_dumbbell","min_roll_dumbbell","min_pitch_dumbbell","min_yaw_dumbbell","amplitude_roll_dumbbell","amplitude_pitch_dumbbell","amplitude_yaw_dumbbell","var_accel_dumbbell","avg_roll_dumbbell","stddev_roll_dumbbell","var_roll_dumbbell","avg_pitch_dumbbell","stddev_pitch_dumbbell","var_pitch_dumbbell","avg_yaw_dumbbell","stddev_yaw_dumbbell","var_yaw_dumbbell","kurtosis_roll_forearm","kurtosis_picth_forearm","kurtosis_yaw_forearm","skewness_roll_forearm","skewness_pitch_forearm","skewness_yaw_forearm","max_roll_forearm","max_picth_forearm","max_yaw_forearm","min_roll_forearm","min_pitch_forearm","min_yaw_forearm","amplitude_roll_forearm","amplitude_pitch_forearm","amplitude_yaw_forearm","var_accel_forearm","avg_roll_forearm","stddev_roll_forearm","var_roll_forearm","avg_pitch_forearm","stddev_pitch_forearm","var_pitch_forearm","avg_yaw_forearm","stddev_yaw_forearm","var_yaw_forearm")
+
+# Keep 53 variables with relevant information + target variable "classe"
+cols.want <- c("user_name","roll_belt","pitch_belt","yaw_belt","total_accel_belt","gyros_belt_x","gyros_belt_y","gyros_belt_z","accel_belt_x","accel_belt_y","accel_belt_z","magnet_belt_x","magnet_belt_y","magnet_belt_z","roll_arm","pitch_arm","yaw_arm","total_accel_arm","gyros_arm_x","gyros_arm_y","gyros_arm_z","accel_arm_x","accel_arm_y","accel_arm_z","magnet_arm_x","magnet_arm_y","magnet_arm_z","roll_dumbbell","pitch_dumbbell","yaw_dumbbell","total_accel_dumbbell","gyros_dumbbell_x","gyros_dumbbell_y","gyros_dumbbell_z","accel_dumbbell_x","accel_dumbbell_y","accel_dumbbell_z","magnet_dumbbell_x","magnet_dumbbell_y","magnet_dumbbell_z","roll_forearm","pitch_forearm","yaw_forearm","total_accel_forearm","gyros_forearm_x","gyros_forearm_y","gyros_forearm_z","accel_forearm_x","accel_forearm_y","accel_forearm_z","magnet_forearm_x","magnet_forearm_y","magnet_forearm_z","classe")
+
+```
+
+We discarded theese `r length(cols.dont.want.1)` variables since they are not related to the quality of the barbell lift.  Even though they may be correlated to the target variable, we didn't use them to train our models to maximize generalization power.
+
+```{r discard, echo=FALSE}
+cols.dont.want.1
+```
+
+We also discarded `r length(cols.dont.want.2)` variables that didn't contain information (ie. all NA, all empty, all same value, etc.).
+
+### Variable "user name"
+In this analysis we included "user name"" as a predictor.  Each participant might have specific patterns while performing the activity so "user name"" could have predictive value.  If we wanted to generalize the model to perform with unknown people, we should remove "user name" from training dataset.
+
+```{r filter}
+#cols.want
+cleanData <- cleanData[, names(cleanData) %in% cols.want]
+dim(cleanData)
+```
+
+The cleaned dataset contains 19216 observations of 54 variables: 53 predictors and the target variable "classe".  
+
+### Create partitions
+We divided the dataset in two partitions: 60% training, 40% validation.
+
+```{r divide, cache = TRUE}
+# Set seed
+set.seed(12345)
+
+# Partition data: training vs validation
+inTrain <- createDataPartition(cleanData$classe, p = 0.6)[[1]]
+training <- cleanData[inTrain,]
+validation <- cleanData[-inTrain,]
+
+dim(training)
+dim(validation)
+```
+
+## Training models
+We wanted to archieve an accuracy higer than 80%. This is because we needed to predict 20 test cases and score more than 80%. In order to do so, we trained different models in increasing order of complexity.
+
+### Partition tree
+The first model was a partition tree with bootstrapped resampling.
+
+```{r tree, cache=TRUE}
+# Train partition tree
+m1 <- train(classe~ .,data=training,method="rpart")
+
+# Apply model to validation set and meassure accuracy
+p1 <- predict(m1, newdata=validation)
+acc1 <- sum(p1 == validation$classe) / length(p1)
+```
+
+Partition tree yielded an accuracy of `r round(acc1,3)` (meassured on validation set).  This performance was unacceptable. 
+
+### Random forest
+The second model was a random forest with 10-fold cross validation.  
+
+```{r forest, cache=TRUE}
+# Train random forest with cross validation (default 10-fold)
+myTrainCtrl <- trainControl(method = "cv")
+m2 <- train(classe~ .,data=training,method="rf", trControl = myTrainCtrl)
+
+# Apply model to validation set and meassure accuracy
+p2 <- predict(m2, newdata=validation)
+acc2 <- sum(p2 == validation$classe) / length(p2)
+
+```
+
+```{r plot, echo=FALSE}
+plot(m2, main = "Accuracy vs Number of Predictors")
+```
+
+Random forest yielded an accuracy of `r round(acc2, 3)` (meassured on validation set).  Accuracy was acceptable, so this was the chosen model.
+
+## Out of sample error
+In supervised learning applications in machine learning and statistical learning theory, generalization error (also known as the out-of-sample error) is a measure of how accurately an algorithm is able to predict outcome values for previously unseen data.  (from Wikipedia https://en.wikipedia.org/wiki/Generalization_error)
+
+The expected out-of-sample error for our chosen model (Random Forest) is  1 - accuracy = `r round(1-acc2,3)`.
+
+Confusion Matrix shows global accuracy and statistics by classe:
+
+```{r confusion}
+# Confusion matrix
+confusionMatrix(p2, validation$classe)
+```
